@@ -61,6 +61,7 @@ typedef u32 Arch_Code;
 enum{
     Arch_X64,
     Arch_X86,
+    Arch_arm64,
     
     //
     Arch_COUNT,
@@ -70,6 +71,7 @@ enum{
 char *arch_names[] = {
     "x64",
     "x86",
+    "arm64",
 };
 
 #if OS_WINDOWS
@@ -496,6 +498,20 @@ build(Arena *arena, u32 flags, u32 arch, char *code_path, char *code_file, char 
     build(arena, flags, arch, code_path, code_files, out_path, out_file, defines, exports, inc_folders);
 }
 
+// https://stackoverflow.com/questions/152016/detecting-cpu-architecture-compile-time
+internal Arch_Code
+get_architecture() {
+    #if defined(__x86_64__) || defined(_M_X64)
+        return Arch_X64;
+    #elif defined(i386) || defined(__i386__) || defined(__i386) || defined(_M_IX86)
+        return Arch_X86;
+    #elif defined(__aarch64__) || defined(_M_ARM64)
+        return Arch_arm64;
+    #else
+        #error Unknown architecture
+    #endif
+}
+
 function void
 dispatch_build(Arena *arena, u32 arch, char *cwd, u32 flags, char** dist_files, i32 dist_file_count){
     Temp_Dir temp = fm_pushdir(fm_str(arena, BUILD_DIR));
@@ -558,13 +574,13 @@ int main(int argc, char **argv){
     Assert(n < sizeof(cwd));
     
     u32 flags = 0;
-    u32 arch = Arch_X64;
+    u32 arch = get_architecture();
 
-#if defined(DEV_BUILD) || defined(DEV_BUILD_X86)
+#if defined(DEV_BUILD)
     flags |= DEBUG_INFO | INTERNAL;
 #endif
 
-#if defined(OPT_BUILD) || defined(OPT_BUILD_X86)
+#if defined(OPT_BUILD)
     flags |= OPTIMIZATION | SHIP;
 #endif
 
@@ -576,10 +592,6 @@ int main(int argc, char **argv){
     #endif
 #endif
 
-#if defined(DEV_BUILD_X86) || defined(OPT_BUILD_X86)
-    arch = Arch_X86;
-#endif
-    
     // NOTE(allen): meta
     char *dist_files[] = {
         fm_str(&arena, "../non-source/dist_files"),
@@ -600,4 +612,3 @@ int main(int argc, char **argv){
 }
 
 // BOTTOM
-
