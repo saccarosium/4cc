@@ -497,12 +497,7 @@ build(Arena *arena, u32 flags, u32 arch, char *code_path, char *code_file, char 
 }
 
 function void
-package_for_arch(Arena *arena, u32 arch, char *cwd, u32 flags, char** dist_files, i32 dist_file_count){
-    char* custom_target = default_custom_target;
-    
-    printf("\nBUILD: 4coder\n arch = %s;\n file = %s;\n", arch_names[arch], custom_target);
-    fflush(stdout);
-    
+dispatch_build(Arena *arena, u32 arch, char *cwd, u32 flags, char** dist_files, i32 dist_file_count){
     Temp_Dir temp = fm_pushdir(fm_str(arena, BUILD_DIR));
     
     char *build_script_postfix = "";
@@ -522,7 +517,7 @@ package_for_arch(Arena *arena, u32 arch, char *cwd, u32 flags, char** dist_files
     }
     char *build_script = fm_str(arena, "custom/bin/buildsuper_", arch_names[arch], build_script_postfix, BAT);
     
-    char *build_command = fm_str(arena, "\"", cwd, "/", build_script, "\" \"", custom_target, "\"");
+    char *build_command = fm_str(arena, "\"", cwd, "/", build_script, "\" \"", default_custom_target, "\"");
     if (This_OS == Platform_Windows){
         build_command = fm_str(arena, "call ", build_command);
     }
@@ -555,33 +550,6 @@ package_for_arch(Arena *arena, u32 arch, char *cwd, u32 flags, char** dist_files
     fm_copy_all(custom_src_dir, custom_dst_dir);
 }
 
-internal void
-package(Arena *arena, char *cwd, Arch_Code arch){
-    // NOTE(allen): meta
-    char *dist_files[2];
-    dist_files[0] = fm_str(arena, "../non-source/dist_files");
-    dist_files[1] = fm_str(arena, "ship_files");
-    
-    printf("cwd: %s\n", cwd);
-    printf("build dir: %s\n", BUILD_DIR);
-    printf("dist files: %s, %s\n", dist_files[0], dist_files[1]);
-    fflush(stdout);
-    
-    u32 flags = SHIP | DEBUG_INFO | OPTIMIZATION;
-    
-#if OS_WINDOWS
-#if defined( WIN32_DX11 )
-    flags |= DX11;
-#else
-    flags |= OPENGL;
-#endif
-#endif
-    
-    Temp_Memory temp = begin_temp(arena);
-    package_for_arch(arena, arch, cwd, flags, dist_files, ArrayCount(dist_files));
-    end_temp(temp);
-}
-
 int main(int argc, char **argv){
     Arena arena = fm_init_system(DetailLevel_FileOperations);
     
@@ -589,26 +557,44 @@ int main(int argc, char **argv){
     i32 n = fm_get_current_directory(cwd, sizeof(cwd));
     Assert(n < sizeof(cwd));
     
-    u32 flags = SUPER;
+    u32 flags = 0;
     u32 arch = Arch_X64;
+
 #if defined(DEV_BUILD) || defined(DEV_BUILD_X86)
     flags |= DEBUG_INFO | INTERNAL;
 #endif
+
 #if defined(OPT_BUILD) || defined(OPT_BUILD_X86)
-    flags |= OPTIMIZATION;
+    flags |= OPTIMIZATION | SHIP;
 #endif
+
 #if OS_WINDOWS
-#if defined(WIN32_DX11)
-    flags |= DX11;
-#else
-    flags |= OPENGL;
+    #if defined(WIN32_DX11)
+        flags |= DX11;
+    #else
+        flags |= OPENGL;
+    #endif
 #endif
-#endif
+
 #if defined(DEV_BUILD_X86) || defined(OPT_BUILD_X86)
     arch = Arch_X86;
 #endif
     
-    package(&arena, cwd, arch);
+    // NOTE(allen): meta
+    char *dist_files[] = {
+        fm_str(&arena, "../non-source/dist_files"),
+        fm_str(&arena, "ship_files"),
+    };
+    
+    printf("cwd: %s\n", cwd);
+    printf("BUILD: 4coder\n");
+    printf(" arch: %s\n", arch_names[arch]);
+    printf(" build dir: %s\n", BUILD_DIR);
+    fflush(stdout);
+    
+    Temp_Memory temp = begin_temp(&arena);
+    dispatch_build(&arena, arch, cwd, flags, dist_files, ArrayCount(dist_files));
+    end_temp(temp);
     
     return(error_state);
 }
