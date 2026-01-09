@@ -12,7 +12,6 @@
 //#define FM_PRINT_COMMANDS
 
 #include "4coder_base_types.h"
-#include "4coder_version.h"
 
 #include "4coder_base_types.cpp"
 #include "4coder_malloc_allocator.cpp"
@@ -20,13 +19,12 @@
 #define FTECH_FILE_MOVING_IMPLEMENTATION
 #include "4coder_file_moving.h"
 
-
 //
 // OS and compiler index
 //
 
 typedef u32 Platform_Code;
-enum{
+enum {
     Platform_Windows,
     Platform_Linux,
     Platform_Mac,
@@ -41,8 +39,8 @@ char *platform_names[] = {
     "mac",
 };
 
-typedef u32 Compiler_Code;
-enum{
+typedef u32 CompilerCode;
+enum {
     Compiler_CL,
     Compiler_GCC,
     Compiler_Clang,
@@ -58,7 +56,7 @@ char *compiler_names[] = {
 };
 
 typedef u32 Arch_Code;
-enum{
+enum {
     Arch_X64,
     Arch_X86,
     Arch_arm64,
@@ -93,6 +91,11 @@ char *arch_names[] = {
 #else
 # error This compilers is not enumerated.
 #endif
+
+struct BuildOptions {
+    CompilerCode compiler;
+    u32 flags;
+};
 
 //
 // Universal directories
@@ -134,7 +137,7 @@ char *default_custom_target = ".." SLASH "code" SLASH "custom" SLASH "4coder_def
 
 // NOTE(allen): Build flags
 
-enum{
+enum {
     OPTS = 0x1,
     LIBS = 0x2,
     ICON = 0x4,
@@ -524,6 +527,10 @@ dispatch_build(Arena *arena, u32 arch, char *cwd, u32 flags, char** dist_files, 
         build_command = fm_str(arena, "call ", build_command);
     }
 
+    if (flags & OPTIMIZATION) {
+        build_command = fm_str(arena, build_command, " release");
+    }
+
     systemf("%s", build_command);
     
     fm_popdir(temp);
@@ -552,14 +559,99 @@ dispatch_build(Arena *arena, u32 arch, char *cwd, u32 flags, char** dist_files, 
     fm_copy_all(custom_src_dir, custom_dst_dir);
 }
 
+b32 string8_startswith(String8 s, String8 prefix)
+{
+    if (s.size < prefix.size) 
+        return false;
+
+    for (u64 i = 0; i < prefix.size; ++i) {
+        if (prefix.str[i] != s.str[i])
+            return false;
+    }
+
+    return true;
+}
+
+BuildOptions parse_cmdline(int argc, char** argv)
+{
+    BuildOptions opts = { 0 };
+    opts.flags |= DEBUG_INFO | OPENGL;
+
+#if OS_WINDOWS
+    opts.compiler = Compiler_CL;
+#elif OS_MAC
+    opts.compiler = Compiler_Clang;
+#elif OS_LINUX
+    opts.compiler = Compiler_GCC;
+#endif
+
+    int i = 0;
+    while (i < argc) {
+        String8 flag = SCu8(argv[i]);
+
+        if (string_match(flag, str8_lit("-B"))) {
+            if (++i > argc) {
+                printf("Error\n");
+                exit(1);
+            }
+
+            String8 arg = SCu8(argv[i]);
+            if (string_match(arg, str8_lit("opengl"))) {
+                opts.flags |= OPENGL;
+#if OS_WINDOWS
+            } else if (string_match(arg, str8_lit("dx11"))) {
+                opts.flags |= DX11;
+#endif
+            } else {
+                printf("Error\n");
+                exit(1);
+            }
+        } else if (string_match(flag, str8_lit("-C"))) {
+            if (++i > argc) {
+                printf("Error\n");
+                exit(1);
+            }
+
+            String8 arg = SCu8(argv[i]);
+            if (string_match(arg, str8_lit("clang"))) {
+                opts.compiler = Compiler_Clang;
+            } else if (string_match(arg, str8_lit("clang"))) {
+                opts.compiler = Compiler_Clang;
+            } else if (string_match(arg, str8_lit("gcc"))) {
+                opts.compiler = Compiler_GCC;
+            } else {
+                printf("Error\n");
+                exit(1);
+            }
+        } else if (string_match(flag, str8_lit("-O"))) {
+            // Optimize build
+            opts.flags |= OPTIMIZATION | SHIP;
+            opts.flags &= ~DEBUG_INFO & ~INTERNAL;
+        } else if (string_match(flag, str8_lit("-D"))) {
+            // Debug build
+            opts.flags |= DEBUG_INFO | INTERNAL;
+            opts.flags &= ~OPTIMIZATION & ~SHIP;
+        } else if (string8_startswith(flag, str8_lit("-"))) {
+            printf("Error\n");
+            exit(1);
+        }
+
+        ++i;
+    }
+
+    return opts;
+}
+
 int main(int argc, char **argv){
+    BuildOptions opts = parse_cmdline(argc, argv);
+
     Arena arena = fm_init_system(DetailLevel_FileOperations);
     
     char cwd[256];
     i32 n = fm_get_current_directory(cwd, sizeof(cwd));
     Assert(n < sizeof(cwd));
     
-    u32 flags = 0;
+    u32 flags = opts.flags;
 
 #if ARCH_X86 
     u32 arch = Arch_X86;
@@ -569,33 +661,16 @@ int main(int argc, char **argv){
     u32 arch = Arch_arm64;
 #endif
 
-#if defined(DEV_BUILD)
-    flags |= DEBUG_INFO | INTERNAL;
-#endif
-
-#if defined(OPT_BUILD)
-    flags |= OPTIMIZATION | SHIP;
-#endif
-
-#if OS_WINDOWS
-    #if defined(WIN32_DX11)
-        flags |= DX11;
-    #else
-        flags |= OPENGL;
-    #endif
-#endif
-
     // NOTE(allen): meta
     char *dist_files[] = {
         fm_str(&arena, "../non-source/dist_files"),
         fm_str(&arena, "ship_files"),
     };
     
-    printf("cwd: %s\n", cwd);
-    printf("BUILD: 4coder\n");
-    printf(" arch: %s\n", arch_names[arch]);
-    printf(" build dir: %s\n", BUILD_DIR);
+    printf("[4coder for %s]\n", arch_names[arch]);
     fflush(stdout);
+
+    fm_make_folder_if_missing(&arena, BUILD_DIR);
     
     Temp_Memory temp = begin_temp(&arena);
     dispatch_build(&arena, arch, cwd, flags, dist_files, ArrayCount(dist_files));
